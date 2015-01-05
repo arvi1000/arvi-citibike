@@ -1,0 +1,232 @@
+---
+title: "QMSS Indepdent Study"
+
+output: html_document
+---
+<script type='css'>
+h1 {
+   font-size:2.2em;
+}
+
+h2 {
+   font-size:1.8em;
+}
+
+h3 {
+   font-size:1.4em;
+}
+</script>
+
+QMSS Independent Study | Fall 2014 | Arvi Sreenivasan | as4341@columbia.edu
+
+## Exploratory Data Analysis of Citi Bike Trip Data in R/Markdown
+
+### Objective and Background
+
+This independent study project is an exploratory data analysis of trip data from the NYC bike share system, Citi Bike. The dataset was first released in the spring of 2014, and contains geo-location and user demographic data for individual bike trips. Data is released in chunks covering single calendar months, beginning with July 2013.
+
+Besides analyzing the datset, another objective for this project is to employ a literate programming ^1 / reproducible research methodology ^2. Research artifacts are traditionally the product of multiple code snippets plus some amount of undocumented manual editing. The result is a research which can be methodologically difficult or impossible to understand and reproduce, even retrospectively for the author him/herself. In the literate/reproducible approach, the code required to produce the analysis is presented as part of the output, and can be run start to finish to (re)produce the final output deterministically.
+
+### Data Collection
+
+I decided to work with one full year of data, from the first available release of July 2013 through to June 2014. Since we might expect bike share use to have seasonal variation, this gives us one complete cycle.
+
+Citi Bike data is made available at http://www.citibikenyc.com/system-data. Data is grouped by month, and offered for download at URLs conforming to the convention: `https://s3.amazonaws.com/tripdata/YYYYMM-citibike-tripdata.zip`. Accordingly, I construct the appropriate URL for each of 12 months, download to disk, and unzip. Since the dataset is large and the process can take a while, I also output current file and time elapsed to the console.
+
+<a name='0back'><a href='#0'>0. see code</a>
+
+Once the data is downloaded, I read from disk using `data.table::fread()` (which is faster than base R's `read.csv`), tidy up field names, and convert data types as necessary. I also save an `.RDS` binary object, to avoid having to repeat the loading/tidying of CSV files during development.
+
+<a name='1back'><a href='#1'>1. see code</a>
+
+### Descriptive Summary
+
+One year's worth of trip data amounts to a total of `r prettyNum(nrow(trips), big.mark=',')` records--each representing an individual trip on a Citi Bike. Each record is a collection of the following fields, which have self explanatory names:
+
+```{r show_fields, tidy=FALSE}
+names(trips)
+```
+
+I create a basic descriptive visualization for each of these, using the data manipulation features of the `data.table` package and plotting from `ggplot2`.
+
+<a name='2back'><a href='#2'>2. see code</a>
+
+For `tripduration` (which is just the difference in seconds between `stoptime` and `starttime`), we see the most common ride duration is between 5 and 10 minutes long (about 1/3rd of all CitiBike trips). Thirty and 45 minutes are, respectively, the basic rental lengths for non subscribers and subscribers, and we see 80% and 98% of trips being below each of these thresholds.
+
+```{r _dur_fig, echo=FALSE, fig.width=5, fig.height=4, dpi=144}
+grid.arrange(dur_gg + theme(text=element_text(size=6)),
+             dur_cdf_gg + theme(text=element_text(size=6)),
+             nrow=2)
+```
+
+There are also significant seasonal trends, with more temperate months seeing higher ridership. There also quite bit of weekly variation, but it isn't consistent between months. For example, Tuesday was on average the busiest day in October, but nearly the least busy day in January. Given the instability of intra-week trends, I don't see a clear day-of-week narrative, at least at the total system level. (As we'll see later, individual stations have very different profiles, so it might be interesting to repeat the weekday analysis by station, but I leave that unexplored for now).
+
+```{r _seasons_fig, echo=FALSE, fig.width=5, fig.height=4, dpi=144}
+seasons_gg + theme(text=element_text(size=6))
+```
+
+The `usertype` field records whether a trip was by a subscriber, or by a casual customer (renting from a station kiosk). We see that overwhelmingly Citi Bike is used by subscribers.
+
+```{r _demo_table, echo=FALSE}
+kable(trips[, .(.N, pct=round(.N/nrow(trips), 3)), by=usertype][
+  , .(usertype, N=prettyNum(N, big.mark=','), pct)])
+```
+
+For subscribers, we also get birth year and gender demographic information. Citibike users are far more often male than female, and skew young, with age 30 being modal.
+
+```{r _demo_fig, echo=FALSE, fig.width=5, fig.height=3, dpi=144}
+demo_gg + theme(text=element_text(size=6))
+```
+
+### Data Prep for Geographic Plots
+
+The aspect of this project I was most interested in was geographic plotting. In some cases, bike `station_id`s were associated with more than one location (because sometimes stations get moved around the corner, e.g.), so to simplify the dataset, I identified each `station_id` with the lat/lon coordinates where the majority of associated trips were reported.
+
+I then took the midpoint of the station coordinate ranges, and extracted a Google map tile centered there (using the `ggmap` package, which wraps the Google Maps API). Because Google map tiles have fixed levels of zoom, I took the best match zoom setting (determined by trial and error), and then cropped it to just the area of interest. I layered a dark semi transparent polygon in order to increase contrast to figures plotted over top.
+
+With these objects in place, I'm set up to do geographic plotting.
+
+<a name='3back'><a href='#3'>3. see code</a>
+
+### Visualizing Stations
+
+I begin by analyzing stations. I aggregated data by station and looked at average traffic (i.e total departures plus total returns, divided by two) as well as the difference between total return and departure volume. We see there's huge variation in total traffic, with Manhattan stations (particularly in midtown) touching far more trips than Brooklyn stations.
+
+We also see stations near Grand Central and along Broadway near Times Square disportionately serve outbound trips: people checking bikes out far more often than they return them (red shading). Stations at the edges of the service area often see the inverse: e.g., the stations at the bases of the Williamsburg and Manhattan bridges in Brooklyn see more returns than check outs (blue-purple shading).
+
+<a name='4back'><a href='#4'>4. see code</a>
+
+```{r _traffic_fig, echo=FALSE, fig.align='left', fig.width=4, fig.height=4, dpi=144}
+station_traffic_gg + theme(text=element_text(size=6))
+```
+
+### Most popular trips
+
+Most trips are point-to-point, but some depart from and return to the same station.
+
+<a name='5back'><a href='#5'>5. see code</a>
+
+```{r _trips_table, echo=FALSE}
+kable(top_trips_table[, .(round_trip, 
+                          trips=prettyNum(trips, big.mark=','),  
+                          trips_pct)])
+```
+
+We can look at the top 20 'routes' overall (i.e. most popular journeys between all pairs of stations, including round trips). 
+
+* Stations near tourist destinations that also have good seperated bike infrastructure stand out as the most popular round trip stations: Central Park, the west side bike path, and the Manhattan-side base of the Brooklyn Bridge.
+* Popular point-to-point trips include both likely leisure rides (like those starting and ending on either side of Central Park, or up and down the west side path), and more likely commuter rides (like between Grand Central and Port Authority)
+
+```{r _top_trips_fig, echo=FALSE, fig.align='left', fig.width=4, fig.height=4, dpi=144}
+top_trips_gg + theme(text=element_text(size=6))
+```
+
+### Attempting an overview of all point-to-point traffic
+
+Perhaps most interesting are the millions of point-to-point journeys which make up the bulk of this dataset. Plotting all 8M+ trips in a single view would result in a confused, overplotted mess. One solution is to reduce volume, and distinguish by direction.
+
+I look at only the common trips, which I set as those ridden at least 500 times. Furthermore, because a journey from A to B is fundamentally different than one from B to A, we need some way of discerning 'directionality'. I choose to facet by 'main cardinal direction'. Any trip in 2 dimensional space involves some amount of travel North, South, East, and/or West. Calculating the direction of greatest distance change gives us a way to assign 'cardinality', in this idiosyncratic sense.
+
+* This is a visually appealing and information-rich image, that yields interesting observations and ideas for further investigation with prolonged inspection
+* Despite it's shared lane with pedestrians, the Brooklyn Bridge appears to be the most popular Citibike bridge, with significant north- and south-bound traffic. Meanwhile, the Manhattan bridge is more popular southbound than northbound, and other bridges barely register.
+* Wiliamsburg and Ft Greene are islands, with fair bit of intra-region traffic, but not as much traffic connecting them to other areas
+* The west side bike path is a popular north/south route, but not as many people begin or end crosstown trips there
+
+<a name='6back'><a href='#6'>6. see code</a>
+
+```{r _nsew_fig, echo=FALSE, fig.align='left', fig.width=4, fig.height=4, dpi=144}
+nsew_trips_gg + theme(text=element_text(size=8))
+```
+
+
+### Reflection and Future Work
+
+**Substantively**, I'm obviously only scraping the surface of what can be done with the dataset. At first, I wanted to examine the issue of bike load rebalancing, which is the process in which Citi Bike administrators a) free up docking spaces in overly full stations, and b) replenish bike overly empty ones. However, I quickly discovered that I can't look at this directly using this dataset. The trip data doesn't show how many bikes are available at a given station--this only available through the CitiBike JSON dock feed, which isn't archived historically. Furthermore, the trip data only includes customer trips, and not 'deposits and withdrawals' of bikes due to rebalancing. 
+
+It's easy to see that rebalancing is occurring, by looking at the cumulative tally of bikes at a station. Stations often get more deposits than they could handle even if they began at 0 bikes, and more withdrawals than they could serve even if they began at full capacity. (For example, here's a random collection of 9 stations for a particular week, with absolute bike capacity for that station plotted as horizontal black lines above and below the y=0 line)
+
+<a name='7back'><a href='#7'>7. see code</a>
+
+```{r _flux_fig, echo=FALSE, fig.align='left', fig.width=4, fig.height=4, dpi=144}
+bike_flux_gg + theme(text=element_text(size=6))
+```
+
+It would have been interesting to explore rebalancing, and a future research project might involve trying to deduce when rebalancing was likely to have happened, given the timeseries cumulative of bike deposits and withdrawals. 
+
+**Methodologically**, this project was a great learning opportunity. It helped me stretch my knowledge of not just spatial analysis/plotting and the Google Maps API, but also (and especially) `knitr`, markdown, CSS, and the literate programming/reproducible research paradigm. The visualiztions are interesting but are stricly static. In the future in might be interesting to try rendering the maps in interactive form, perhaps using `leaflet.js` or a similar library.
+
+------
+### Code Appendix
+
+```{r read_chunks, echo=FALSE}
+read_chunk(path='0_download_data.R', labels='download_data')
+read_chunk(path='1_load_data.R', labels='load_data')
+read_chunk(path='2_descriptive_viz.R', labels='descr_viz')
+read_chunk(path='3_station_map_setup.R', labels='map_setup')
+read_chunk(path='4_station_traffic.R', labels='station_traffic')
+read_chunk(path='5_top_trips.R', labels='top_trips')
+read_chunk(path='6_nsew_trips.R', labels='nsew_trips')
+read_chunk(path='7_volume_flux.R', labels='flux')
+```
+
+<a name='0'>`0_download_data.R`</a>
+
+```{r download_data, eval=FALSE, tidy=FALSE}
+```
+<a href='#0back'>go back</a>
+
+------
+<a name='1'>`1_load_data.R`</a>
+
+```{r load_data, eval=FALSE, tidy=FALSE}
+```
+<a href='#1back'>go back</a>
+
+------
+<a name='2'> `2_descriptive_viz.R`</a>
+
+```{r descr_viz, eval=FALSE, tidy=FALSE}
+```
+<a href='#2back'>go back</a>
+
+------
+<a name='3'> `3_station_map_setup.R`</a>
+
+```{r map_setup, eval=FALSE, tidy=FALSE}
+```
+<a href='#3back'>go back</a>
+
+------
+<a name='4'> `4_station_traffic.R`</a>
+
+```{r station_traffic, eval=FALSE, tidy=FALSE}
+```
+<a href='#4back'>go back</a>
+
+------
+<a name='5'> `5_top_trips.R`</a>
+
+```{r top_trips, eval=FALSE, tidy=FALSE}
+```
+<a href='#5back'>go back</a>
+
+------
+<a name='6'> `6_nsew_trips.R`</a>
+
+```{r nsew_trips, eval=FALSE, tidy=FALSE}
+```
+<a href='#6back'>go back</a>
+
+------
+<a name='7'> `7_volume_flux.R`</a>
+
+```{r flux, eval=FALSE, tidy=FALSE}
+```
+<a href='#7back'>go back</a>
+
+------
+### Citations
+
+^1. Knuth, D. E. (1984). Literate programming. The Computer Journal, 27(2), 97-111.
+
+^2. Gandrud, C. (2013). Reproducible research with R and RStudio. CRC Press.
